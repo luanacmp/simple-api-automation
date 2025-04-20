@@ -14,13 +14,20 @@ app.use(express.json());
 
 async function startServer() {
     await ensureUserTable();
-    app.listen(PORT, () => {
-        console.log(`Server running on http://localhost:${PORT}`);
-        console.log(`Swagger docs available at http://localhost:${PORT}/api-docs`);
-    });
+
+    if (require.main === module) {
+        app.listen(PORT, () => {
+            console.log(`Server running on http://localhost:${PORT}`);
+            console.log(`Swagger docs available at http://localhost:${PORT}/api-docs`);
+        });
+    }
 }
 
 startServer();
+
+// Exporta apenas o app, para ser usado nos testes com supertest
+module.exports = app;
+
 
 const SECRET_KEY = 'your-secret-key';
 
@@ -33,7 +40,7 @@ const swaggerDefinition = {
     },
     servers: [
         {
-            url: `https://1494-2a01-11-f10-6e10-5061-de11-2740-b8fb.ngrok-free.app`,
+            url: `http://localhost:3000`,
         },
     ],
 };
@@ -148,7 +155,7 @@ app.post('/register', async (req, res) => {
             email,
         });
     } catch (e) {
-        return res.status(500).json({ message: e });
+        return res.status(500).json({ message: e.message });
     }
 });
 
@@ -205,7 +212,7 @@ app.post('/register', async (req, res) => {
 app.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-        // if (!email) return res.status(400).json({ message: 'Email is required' });
+        if (!email) return res.status(400).json({ message: 'Email is required' });
         if (!password) return res.status(400).json({ message: 'Password is required' });
         if (password.length < 4) return res.status(400).json({ message: 'Password should contain at least 4 characters' });
         const user = await getUserByEmail(email);
@@ -510,6 +517,37 @@ app.put('/movies/:id', authenticateToken, async (req, res) => {
     }
 });
 
+app.patch('/movies/:id', authenticateToken, async (req, res) => {
+    try {
+        const id = req.params.id;
+        const userId = req.user.userId;
+        const movie = await getMovieById(id, userId);
+
+        if (!movie) {
+            return res.status(404).json({ message: `Movie with ID ${id} is not found` });
+        }
+
+        const data = req.body;
+
+        // Atualiza apenas os campos permitidos no banco
+        await updateMovie(data, id);
+
+        // Remove campos indesejados da resposta (ex: foo)
+        const allowedFields = ['title', 'rating', 'genre'];
+        const filteredUpdate = {};
+        for (const field of allowedFields) {
+            if (data[field]) {
+                filteredUpdate[field] = data[field];
+            }
+        }
+
+        return res.status(200).json({ ...movie, ...filteredUpdate });
+    } catch (e) {
+        return res.status(500).json({ message: e.message });
+    }
+});
+
+
 /**
  * @swagger
  * /movies/{id}:
@@ -635,7 +673,7 @@ app.patch('/movies/:id', authenticateToken, async (req, res) => {
  *                   type: string
  *                   enum:
  *                     - "Unauthorized"
-*/
+ */
 app.delete('/movies/:id', authenticateToken, async (req, res) => {
     const id = req.params.id;
     const userId = req.user.userId;
